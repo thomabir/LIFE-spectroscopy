@@ -43,17 +43,20 @@ class Spectrum:
         self.flux = flux
         self.label = label
 
+        self.original_wl = wl
+        self.original_flux = flux
+
     def resample(self, SR, SNR):
         lam_min = 3.
         lam_max = 19.
-        lam_avg = (lam_max - lam_min) / 2
+        lam_avg = (lam_max + lam_min) / 2
 
         delta_lam = lam_avg / SR
         n_bins = (lam_max - lam_min) / delta_lam
         n_bins = int(n_bins)
 
         newwl = np.linspace(3., 19., n_bins)
-        newflux = spectres(newwl, self.wl, self.flux)
+        newflux = spectres(newwl, self.original_wl, self.original_flux)
 
         N = SNR**2
         newflux *= N / np.amax(newflux)
@@ -65,7 +68,7 @@ class Spectrum:
         self.fluxerr = newfluxerr
 
     @cached_property
-    def sample_spectrum(self, N=10000):
+    def sample_spectrum(self, N=1000):
         flux = np.around(self.flux)
         return poisson.rvs(flux, size=(N, flux.shape[0]))
 
@@ -84,6 +87,12 @@ class ProbabilityModel:
 
     @cached_property
     def log_probmatr(self):
+        """
+        Returns
+        logprob[i,j]:
+            i ... hypothesis
+            j ... data
+        """
 
         def logprob(hypothesis, data):
             """Return median log_prob of the hypothesis, given the data."""
@@ -102,6 +111,7 @@ class ProbabilityModel:
 
         probmatrix = np.zeros((self.n, self.n))
 
+        # compute the unnormalized log probability matrix
         for i, hypothesis_spectrum in enumerate(spectra):
             for j, data_spectrum in enumerate(spectra):
 
@@ -110,9 +120,16 @@ class ProbabilityModel:
 
                 probmatrix[i, j] = logprob(hypothesis_flux, data_flux)
 
+        # normalize the log probability matrix.
         for j in range(self.n):
-            probmatrix[:, j] = probmatrix[:, j] - \
-                np.log10(np.sum(10**probmatrix[:, j]))
+
+            # for numerical feasability, normalize such that pm[j,j] = 0.
+            # this mathematically not necessary, but numerically important,
+            # because the range of float64 would be exhausted pretty quickly.
+            probmatrix[:, j] = probmatrix[:, j] - probmatrix[j, j]
+
+            # normalize each row "properly", such that the probabilites sum up to 1.
+            probmatrix[:, j] = probmatrix[:, j] - np.log10(np.sum(10**probmatrix[:, j]))
 
         return probmatrix
 
@@ -128,13 +145,13 @@ class ProbabilityModel:
 
         for i in range(self.n):
             for j in range(self.n):
-                if i >= j:
+                if i > j:
                     d1 = abs(pm[i, j] - pm[j, j])
                     d2 = abs(pm[j, i] - pm[i, i])
                     distance[i, j] = min(d1, d2)
-                if i < j:
+                if i <= j:
                     distance[i, j] = np.nan
-        return distance
+        return np.nanmin(distance)
 
     @cached_property
     def metric2(self):
@@ -144,13 +161,25 @@ class ProbabilityModel:
 
         for i in range(self.n):
             for j in range(self.n):
-                if i >= j:
+                if i > j:
                     d1 = abs(pm[i, j] - pm[j, j])
                     d2 = abs(pm[j, i] - pm[i, i])
                     distance[i, j] = min(d1, d2)
-                if i < j:
+                if i <= j:
                     distance[i, j] = np.nan
-        return distance
+
+        return np.nanmin(distance)
+
+    @cached_property
+    def metric3(self):
+        """Confidence of most likely hypothesis"""
+        n = self.n
+        pm = self.probmatr
+
+
+        # pm[hypothesis, data]
+        conf = np.nanmax(pm, axis=0)
+        return np.amin(conf)
 
 
 # def plot_probmatrix(matrix):
@@ -195,14 +224,59 @@ for scenario in scenarios:
     new_spectrum = Spectrum(wl, flux, label)
     spectra.append(new_spectrum)
 
-# resample spectra with new SR, SNR
-SR = 10
-SNR = 10
-for spectrum in spectra:
-    spectrum.resample(10, 10)
-#    spectrum.plot()
-# plt.show()
 
-# find distance metric
-p = ProbabilityModel(spectra)
-print(p.metric2)
+def run_simulation(SR, SNR):
+    for spectrum in spectra:
+        spectrum.resample(SR, SNR)
+        try:
+            del spectrum.sample_spectrum
+        except:
+            pass
+        # spectrum.plot()
+    # plt.show()
+
+    # find distance metric
+    p = ProbabilityModel(spectra)
+    result = p.metric1
+    return 1 - result
+
+
+def plot_heatmap(dist, title):
+    ax = sns.heatmap(dist,
+                     # fmt='.1f',
+                     annot=True,
+                     cmap=sns.color_palette('Blues_r'),
+                     )
+    ax.set_xlabel('SNR')
+    ax.set_ylabel('SR')
+    ax.set_xticklabels(np.around(all_SNR))
+    ax.set_yticklabels(np.around(all_SR))
+    ax.set_title(title)
+    plt.savefig('metric1.pdf')
+    plt.show()
+
+# all_SR = [20, 100, 1000]
+all_SNR = [2, 3, 5, 7, 10, 20]
+
+#N_tot = SNR**2 * SR
+#all_SR = 500 / np.array(all_SNR)**2
+all_SR = [10, 20, 50, 100]
+# all_SNR = np.sqrt(2000 / np.array(all_SR))
+
+
+
+dist = np.empty((len(all_SR), len(all_SNR)))
+
+for i, SR in enumerate(all_SR):
+    for j, SNR in enumerate(all_SNR):
+        # metric
+        try:
+            dist[i, j] = run_simulation(SR, SNR)
+        except:
+            dist[i, j] = np.nan
+
+#title = '1 - confidence that most likely hypothesis is correct\n= "probability of being wrong"'
+title = '1 - difference between probabilities'
+plot_heatmap(dist, title)
+
+
