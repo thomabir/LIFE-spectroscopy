@@ -46,29 +46,38 @@ class Spectrum:
         self.original_wl = wl
         self.original_flux = flux
 
-    def resample(self, SR, SNR):
-        lam_min = 3.
-        lam_max = 19.
-        lam_avg = (lam_max + lam_min) / 2
+    def resample(self, SR=10, SNR=100, overwrite_original=False):
 
+        # features of original spectrum
+        lam_min = max(np.amin(self.original_wl), 3.)  # we measure infrared, so lam >= 3 um
+        lam_max = np.amax(self.original_wl)
+        lam_avg = (lam_min + lam_max) / 2  # assumes uniform sampling
+
+        # features of new spectrum
         delta_lam = lam_avg / SR
+        lam_min += 3 * delta_lam
+        lam_max -= 3 * delta_lam
         n_bins = (lam_max - lam_min) / delta_lam
         n_bins = int(n_bins)
 
-        newwl = np.linspace(3., 19., n_bins)
+        newwl = np.linspace(lam_min, lam_max, n_bins)
         newflux = spectres(newwl, self.original_wl, self.original_flux)
 
-        N = SNR**2
+        N = SNR**2      # no. of photons per bin
         newflux *= N / np.amax(newflux)
 
         newfluxerr = np.sqrt(newflux)
 
+        if overwrite_original:
+            self.original_wl = newwl
+            self.original_flux = newflux
+        
         self.wl = newwl
         self.flux = newflux
         self.fluxerr = newfluxerr
 
     @cached_property
-    def sample_spectrum(self, N=1000):
+    def sample_spectrum(self, N=100fi00):
         flux = np.around(self.flux)
         return poisson.rvs(flux, size=(N, flux.shape[0]))
 
@@ -225,9 +234,9 @@ for scenario in scenarios:
     spectra.append(new_spectrum)
 
 
-def run_simulation(SR, SNR):
+def run_simulation(SR=10, SNR=100):
     for spectrum in spectra:
-        spectrum.resample(SR, SNR)
+        spectrum.resample(SR=SR, SNR=SNR)
         try:
             del spectrum.sample_spectrum
         except:
@@ -255,28 +264,57 @@ def plot_heatmap(dist, title):
     plt.savefig('metric1.pdf')
     plt.show()
 
-# all_SR = [20, 100, 1000]
-all_SNR = [2, 3, 5, 7, 10, 20]
+def generate_heatmap(all_SNR=10, all_SR=100):
+    dist = np.empty((len(all_SR), len(all_SNR)))
+
+    for i, SR in enumerate(all_SR):
+        for j, SNR in enumerate(all_SNR):
+            # metric
+            try:
+                dist[i, j] = run_simulation(SR=SR, SNR=SNR)
+            except:
+                dist[i, j] = np.nan
+
+    #title = '1 - confidence that most likely hypothesis is correct\n= "probability of being wrong"'
+    title = '1 - difference between probabilities'
+    plot_heatmap(dist, title)
+
+# to increase preformance for high-res original spectra,
+# resample them with SR = 1000
+for spectrum in spectra:
+    spectrum.resample(SNR=100, SR=2000, overwrite_original=True)
+
+
+exptimes = [1000, 1500, 2000]
+for exptime in exptimes:
+    all_SNR = np.linspace(2,10,20)
+    all_SR = exptime / all_SNR**2
+
+    dist = np.zeros(all_SNR.shape)
+    for i in range(all_SNR.shape[0]):
+            dist[i] = run_simulation(SR=all_SR[i], SNR=all_SNR[i])
+
+    dist = dist / np.mean(dist)
+    #print(all_SR)
+
+    plt.plot(all_SNR, dist, label=exptime)
+    plt.xlabel('SNR')
+    plt.ylabel('goodness of experiment, normalized\n(lower is better)')
+    plt.title('Ideal SNR for 3 different exposure times')
+    plt.legend()
+
+plt.show()
+
 
 #N_tot = SNR**2 * SR
 #all_SR = 500 / np.array(all_SNR)**2
-all_SR = [10, 20, 50, 100]
+#all_SR = [100, 50, 20, 10]
 # all_SNR = np.sqrt(2000 / np.array(all_SR))
 
 
+# all_SR = [10, 20, 50, 100]
+# all_SNR = [2, 3, 5, 7, 10, 20]
+# generate_heatmap(all_SNR=all_SNR, all_SR=all_SR)
 
-dist = np.empty((len(all_SR), len(all_SNR)))
-
-for i, SR in enumerate(all_SR):
-    for j, SNR in enumerate(all_SNR):
-        # metric
-        try:
-            dist[i, j] = run_simulation(SR, SNR)
-        except:
-            dist[i, j] = np.nan
-
-#title = '1 - confidence that most likely hypothesis is correct\n= "probability of being wrong"'
-title = '1 - difference between probabilities'
-plot_heatmap(dist, title)
 
 
