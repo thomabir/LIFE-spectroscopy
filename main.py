@@ -37,6 +37,11 @@ def getflux(scenario, convert_to_photons=True):
     return wl, flux, label
 
 
+def convert(N_bins, N_photons):
+    # to SR, peak SNR
+    SNR = np.sqrt(N_photons)
+
+
 class Spectrum:
     def __init__(self, wl, flux, label):
         self.wl = wl
@@ -47,21 +52,35 @@ class Spectrum:
         self.original_wl = wl
         self.original_flux = flux
 
-    def resample(self, SR=10, SNR=100, overwrite_original=False):
+    def resample(self, SR=None, SNR=None, n_bins=None, overwrite_original=False):
 
         # features of original spectrum
         lam_min = max(np.amin(self.original_wl), 3.)  # we measure infrared, so lam >= 3 um
-        lam_max = np.amax(self.original_wl)
+        lam_max = min(np.amax(self.original_wl), 19.95)
         lam_avg = (lam_min + lam_max) / 2  # assumes uniform sampling
 
-        # features of new spectrum
-        delta_lam = lam_avg / SR
-        lam_min += 3 * delta_lam
-        lam_max -= 3 * delta_lam
-        n_bins = (lam_max - lam_min) / delta_lam
-        n_bins = int(n_bins)
+        if overwrite_original:
+            lam_min = 1.1
+            lam_max = 19.99
 
-        newwl = np.linspace(lam_min, lam_max, n_bins)
+
+
+        # calculate n_bins from SR, if necessary
+        if SR:
+            delta_lam = lam_avg / SR
+            # lam_min += 1 * delta_lam
+            # lam_max -= 1 * delta_lam
+            n_bins = (lam_max - lam_min) / delta_lam
+            n_bins = int(n_bins)
+            corners = np.linspace(lam_min, lam_max, n_bins+1)
+            midpoints = (corners[1:] + corners[:-1]) / 2
+        else:
+            corners = np.linspace(lam_min, lam_max, n_bins+1)
+            midpoints = (corners[1:] + corners[:-1]) / 2
+
+
+
+        newwl = midpoints
         newflux = spectres(newwl, self.original_wl, self.original_flux)
 
         if SNR:
@@ -76,6 +95,8 @@ class Spectrum:
         self.wl = newwl
         self.flux = newflux
 
+        # print('N_tot', np.sum(self.flux), 'SNR', SNR, 'n_bins', n_bins)
+
     @cached_property
     def sample_spectrum(self):
         samples = self.samples
@@ -83,16 +104,16 @@ class Spectrum:
         return poisson.rvs(flux, size=(samples, flux.shape[0]))
 
     def plot(self, *args, **kwargs):
-        #plt.errorbar(self.wl, self.flux, yerr=self.fluxerr,
-        #             label=self.label, fmt='o', markersize=8, capsize=8)
-        plt.plot(self.wl, self.flux)
+        plt.errorbar(self.wl, self.flux, yerr=self.fluxerr,
+                    label=self.label, fmt='o', markersize=8, capsize=8)
+        # plt.plot(self.wl, self.flux)
         plt.xlabel('wavelength [um]')
         plt.ylabel('photon count')
         plt.legend()
 
 
 class ProbabilityModel:
-    def __init__(self, spectra, samples=150):
+    def __init__(self, spectra, samples=100):
         self.spectra = spectra
         self.n = len(spectra)
         self.samples = samples
@@ -111,9 +132,9 @@ class ProbabilityModel:
 
         def logprob(hypothesis, data):
             """Return median log_prob of the hypothesis, given the data."""
-
             # for each data point in each sampled spectrum
             logprobs = poisson.logpmf(data, hypothesis)
+
 
             # for each sampled spectrum
             total_logprob = np.sum(logprobs, axis=-1)
@@ -129,22 +150,26 @@ class ProbabilityModel:
                 hypothesis_flux = hypothesis_spectrum.flux
                 data_flux = data_spectrum.sample_spectrum
 
+                # p(x|H)
                 probmatrix[i, j, :] = logprob(hypothesis_flux, data_flux)
-        
-        self.p_x_d = np.copy(probmatrix)
+
+        # p(x|H)
+        self.p_x_H = np.copy(probmatrix)
 
         # normalize the log probability matrix.
         for j in range(self.n):
 
             # for numerical feasability, normalize such that pm[j,j] = 0.
-            # this mathematically not necessary, but numerically important,
+            # this is mathematically not necessary, but numerically important,
             # because the range of float64 would be exhausted pretty quickly.
             probmatrix[:, j, :] = probmatrix[:, j, :] - probmatrix[j, j, :]
+
 
             # normalize each row "properly", such that the probabilites sum up to 1.
             probmatrix[:, j, :] = probmatrix[:, j, :] - np.log(np.sum(np.e**probmatrix[:, j, :], axis=0))
 
-
+        # probmatrix = np.median(probmatrix, axis=-1)
+        # p(H|x)
         return probmatrix
 
     @cached_property
@@ -155,6 +180,7 @@ class ProbabilityModel:
     def metric1(self):
         n = self.n
         pm = self.probmatr
+        pm = np.median(pm, axis=-1)
         distance = np.zeros(pm.shape)
 
         for i in range(self.n):
@@ -200,6 +226,7 @@ class ProbabilityModel:
 
 weathers = ['clear']  # , 'cloudy']
 times = ['modern', '0.8Ga', '2.0Ga', '3.9Ga']
+# times = ['0.8Ga', '2.0Ga',]
 
 scenarios = it.product(times, weathers)
 
@@ -211,100 +238,151 @@ for scenario in scenarios:
     spectra.append(new_spectrum)
 
 
-def run_simulation(SR=10, SNR=100):
-    for spectrum in spectra:
-        spectrum.resample(SR=SR, SNR=SNR)
+def run_simulation(SR=None, SNR=None, n_bins=None):
+    SNR_max = SNR
+    # determine the largest flux in all spectra
+    maxflux_i = [np.amax(spectrum.flux) for spectrum in spectra]
+    maxflux = max(maxflux_i)
 
-    samples = 50
+
+    SNR_i = np.sqrt(maxflux_i / maxflux) * SNR
+
+    for SNR, spectrum in zip(SNR_i, spectra):
+        spectrum.resample(SR=SR, SNR=SNR, n_bins=n_bins)
+    #     plt.title(str(SNR) + ' ' + str(SR))
+    #     spectrum.plot()
+
+    # plt.show()
+
+    # add noise
+    # factor = n_bins * SNR**2 / 500  # propto exptime
+    # for spectrum in spectra:
+    #     spectrum.flux += 0.5*factor#poisson.rvs(10, size=(spectrum.flux.shape[0]))
+
+    samples = 100
 
     # find distance metric
     p = ProbabilityModel(spectra, samples=samples)
-    pm = p.log_probmatr
-    p_x_d = p.p_x_d
+    log_p_H_x = p.log_probmatr
 
-    newpm = np.zeros((4,4*samples))
-    new_p_x_d = np.zeros((4, 4*samples))
+
+    log_p_x_H = p.p_x_H
+
+    # reshape
+    new_log_p_H_x = np.zeros((4,4*samples))
+    new_log_p_x_H = np.zeros((4,4*samples))
     
     for i in range(4):
-        newpm[i, :] = pm[i, :, :].flatten()
-        new_p_x_d[i, :] = p_x_d[i, :, :].flatten()
+        new_log_p_H_x[i, :] = log_p_H_x[i, :, :].flatten()
+        new_log_p_x_H[i, :] = log_p_x_H[i, :, :].flatten()
     
     #print('entropy before:', -np.log(1/4))
     E_before = -np.log(1/4)
 
-    P = newpm
+    log_p_H_x = new_log_p_H_x
 
-    P_x_d = new_p_x_d
+    log_p_x_H = new_log_p_x_H
 
-    P_x_d -= np.mean(P_x_d)    # normalize for better numerics
-    P_x_d = np.sum(np.e**P_x_d, axis=0)
-    P_x_d = P_x_d / np.sum(P_x_d) # normalize so that it sums to 1
+    # normalize and sum
+    log_p_x_H -= np.mean(log_p_x_H)    # normalize for better numerics
+    p_x = np.sum(np.e**log_p_x_H, axis=0)
+    p_x = p_x / np.sum(p_x) # normalize so that it sums to 1
 
-    U_x_d = - P * np.exp(P)
-    U_x_d = np.sum(U_x_d, axis=0)
+    U_x = - log_p_H_x * np.exp(log_p_H_x)
+    U_x = np.sum(U_x, axis=0)
 
-
+    # p_x = np.ones(p_x.shape) / p_x.shape[0]
+    # plt.subplot(131)
+    # plt.hist(U_x, label='U_x')
+    # plt.subplot(132)
+    # plt.hist(p_x, label='p_x')
+    # plt.subplot(133)
+    # plt.hist(U_x*p_x, label='p_x * U_x')
+    # plt.legend()
+    # plt.show()
+    # exit()
 
     
+    # U = np.sum(p_x * U_x)
 
-    U_d = P_x_d * U_x_d
-    U_d = np.sum(U_d)
+    # monte carlo estimator:
+    U = np.mean(U_x)
+
+
     #print('entropy after:', U_d)
-    E_after = U_d
+    E_after = U
 
     utility_gain = E_before - E_after
+
+    # print(SNR, n_bins)
+    # print(p.probmatr[:, :, 0])
+    # print(np.median(U_x))
+    # print(np.sum(p_x), np.median(p_x), np.mean(p_x))
+    # print()
+
+    err = np.std(U_x)/np.sqrt(samples)
 
     for spectrum in spectra:
         del spectrum.sample_spectrum
 
-    return E_after
+    return U, err
+
+def run_other_simulation(SR=None, SNR=None, n_bins=None):
+    SNR_max = SNR
+    # determine the largest flux in all spectra
+    maxflux_i = [np.amax(spectrum.flux) for spectrum in spectra]
+    maxflux = max(maxflux_i)
 
 
-def plot_heatmap(dist, title):
-    ax = sns.heatmap(dist,
-                     # fmt='.1f',
-                     annot=True,
-                     cmap=sns.color_palette('Blues_r'),
-                     )
-    ax.set_xlabel('SNR')
-    ax.set_ylabel('SR')
-    ax.set_xticklabels(np.around(all_SNR))
-    ax.set_yticklabels(np.around(all_SR))
-    ax.set_title(title)
-    plt.savefig('metric1.pdf')
-    plt.show()
+    SNR_i = np.sqrt(maxflux_i / maxflux) * SNR
 
-def generate_heatmap(all_SNR=10, all_SR=100):
-    dist = np.empty((len(all_SR), len(all_SNR)))
+    for SNR, spectrum in zip(SNR_i, spectra):
+        spectrum.resample(SR=SR, SNR=SNR, n_bins=n_bins)
+    #     plt.title(str(SNR) + ' ' + str(SR))
+    #     spectrum.plot()
 
-    for i, SR in enumerate(all_SR):
-        for j, SNR in enumerate(all_SNR):
-            # metric
-            try:
-                dist[i, j] = run_simulation(SR=SR, SNR=SNR)
-            except:
-                dist[i, j] = np.nan
+    # plt.show()
 
-    #title = '1 - confidence that most likely hypothesis is correct\n= "probability of being wrong"'
-    title = '1 - difference between probabilities'
-    plot_heatmap(dist, title)
+    # add noise
+    # factor = n_bins * SNR**2 / 500  # propto exptime
+    # for spectrum in spectra:
+    #     spectrum.flux += 0.5*factor#poisson.rvs(10, size=(spectrum.flux.shape[0]))
+
+    samples = 500
+
+    # find distance metric
+    p = ProbabilityModel(spectra, samples=samples)
+    result = 1 - p.metric1
+
+    for spectrum in spectra:
+        del spectrum.sample_spectrum
+    return result, 0
 
 
-from scipy.ndimage import median_filter
+
+
 
 # to increase preformance for high-res original spectra,
 # resample them with SR = 1000
-for spectrum in spectra:
-    spectrum.resample(SNR=None, SR=2000, overwrite_original=True)
+for i, spectrum in enumerate(spectra):
+    spectrum.resample(SNR=None, n_bins=1000, overwrite_original=True)
+    # spectrum.flux = spectrum.flux * 0 + i + 1
+    # spectrum.plot()
+    # plt.show()
 
 
 
-
-
-exptimes = [500, 1000, 2000, 3000]
+exptimes = [500, 1000, 2000, 4000]
 for exptime in exptimes:
-    all_SR = np.geomspace(6, 1000, num=20)
-    all_SNR = np.sqrt(exptime / all_SR)
+    all_n_bins = np.arange(2, 40, 1)
+    #print(all_n_bins)
+    all_SNR = np.sqrt(exptime / all_n_bins)
+
+    # convert to SR
+    lam_max = 19.95
+    lam_min = 3.
+    all_SR = (lam_max + lam_min)/(lam_max - lam_min) * all_n_bins / 2
+
 
     # all_SNR = np.geomspace(0.1,20, num=20)
     # all_SR = exptime / all_SNR**2
@@ -317,34 +395,55 @@ for exptime in exptimes:
     dist_high = np.zeros_like(dist_low)
     dist_med = np.zeros_like(dist_low)
 
-    for i in range(all_SNR.shape[0]):
-        errs = np.zeros((5))
-        for N in range(5):  # no of experiments, to determine error
-            errs[N] = run_simulation(SR=all_SR[i], SNR=all_SNR[i])
 
-        dist_low[i] = np.percentile(errs, 20)
-        dist_med[i] = np.median(errs)
-        dist_high[i] = np.percentile(errs, 80)
+    for i in range(all_SNR.shape[0]):
+        U_x, err = run_other_simulation(n_bins=all_n_bins[i], SNR=all_SNR[i])
+
+        # if i==0:
+        # for spectrum in spectra:
+        #     spectrum.plot()
+        # plt.title('SNR:' + str(all_SNR[i]) + 'bins:' +  str(all_n_bins[i]))
+        # plt.show()
+        # exit()
+
+        dist_low[i] = U_x - err
+        dist_med[i] = U_x
+        dist_high[i] = U_x + err
+
+
+    # avg = np.mean(dist_med)
+    # dist_low /= avg
+    # dist_med /= avg
+    # dist_high /= avg
 
     plt.subplot(121)
-    plt.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.2)
+    plt.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
     plt.plot(all_SR, dist_med)
-    plt.xlabel('SR')
-    plt.yscale('log')
-    plt.xscale('log')
-    plt.ylabel('posterior entropy')
-    plt.title('Ideal SR for different exposure times')
-    plt.legend()
 
     plt.subplot(122)
-    plt.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.2)
+    plt.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
     plt.plot(all_SNR, dist_med)
-    plt.xlabel('SNR')
-    plt.yscale('log')
-    plt.ylabel('posterior entropy')
-    plt.title('Ideal SNR for different exposure times')
-    plt.legend()
+    
 
+prior_entropy = -np.log(1/4)
+
+plt.subplot(121)
+plt.plot(all_SR, all_SR * 0 + prior_entropy, 'k')
+plt.xlabel('SR')
+plt.yscale('log')
+#plt.xscale('log')
+plt.ylabel('posterior entropy [nats]\n(lower is better)')
+plt.title('Ideal SR for different exposure times')
+#plt.legend()
+
+plt.subplot(122)
+plt.plot(np.linspace(4, 20, 2), prior_entropy*np.ones((2)), 'k', label='flat prior (baseline)')
+plt.xlabel('SNR')
+plt.yscale('log')
+plt.title('Ideal SNR for different exposure times')
+plt.legend()
+
+plt.tight_layout()
 plt.show()
 
 
