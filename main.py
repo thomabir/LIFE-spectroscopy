@@ -9,7 +9,7 @@ from functools import lru_cache
 from cached_property import cached_property  # pip install cached-property
 
 import seaborn as sns
-sns.set()
+#sns.set()
 import itertools as it
 
 
@@ -20,7 +20,7 @@ from ProbabilityModel import *
 from design import Design
 
 
-def find_utility(design, spectrum_set, samples):
+def find_utility(design, spectrum_set, samples, utility=None):
 
     # generate actual hypothesis spectra from experimental design
     spectrum_set.resample(design)
@@ -28,13 +28,28 @@ def find_utility(design, spectrum_set, samples):
     # calculate the utility
     pm = ProbabilityModel(spectrum_set=spectrum_set, samples=samples)
     pm.evaluate()
-    utility, utility_std = pm.calculate_utility()
+    utility, utility_std = pm.calculate_utility(utility=utility)
 
     # reset the cached memory (not necessary with this class structure)
     # for spectrum in spectrum_set.spectra:
     #    del spectrum.sample_spectrum
 
     return utility, utility_std
+
+def plot_heatmap(dist, all_SNR, all_SR, title, filename):
+    fig, ax = plt.subplots(1, 1)
+    ax = sns.heatmap(dist,
+                     # fmt='.1f',
+                     annot=True,
+                     cmap=sns.color_palette('Blues_r'),
+                     )
+    ax.set_xlabel('SNR')
+    ax.set_ylabel('SR')
+    ax.set_xticklabels(np.around(all_SNR))
+    ax.set_yticklabels(np.around(all_SR))
+    ax.set_title(title)
+    plt.savefig('fig/' + filename + '-heatmap.pdf')
+
 
 # set the scenarios
 weathers = ['clear']  # , 'cloudy']
@@ -60,16 +75,40 @@ spectrum_set = SpectrumSet(spectra)
 
 
 # set up experiment designs
-exptimes = [100, 500, 1000, 2000, 4000]
+exptimes = [100, 1000, 4000]
 all_n_bins = np.arange(2, 40, 1)
 lam_max = 19.95
 lam_min = 3.
-samples = 100
+samples = 500
 
 
-for exptime in exptimes:
+import matplotlib as mpl
+
+
+import matplotlib.font_manager as fm# Collect all the font names available to matplotlib
+# fm._rebuild()
+# font_names = [f.name for f in fm.fontManager.ttflist]
+# print(font_names)
+# exit()
+
+# mpl.rcParams['font.family'] = 'Avenir'
+plt.rcParams['font.size'] = 11
+plt.rcParams['axes.linewidth'] = 1
+
+
+textwidth = 8
+figheight = 4
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
+    gridspec_kw={'hspace': 0, 'wspace': 0},
+    figsize=(textwidth, figheight))
+
+
+# run experiment: entropy
+for j, exptime in enumerate(exptimes):
     all_SNR = np.sqrt(exptime / all_n_bins)    
     all_SR = (lam_max + lam_min)/(lam_max - lam_min) * all_n_bins / 2
+
 
     dist_low = np.zeros(all_SNR.shape)
     dist_high = np.zeros_like(dist_low)
@@ -77,42 +116,207 @@ for exptime in exptimes:
 
     for i in range(all_n_bins.shape[0]):
         design = Design(n_bins = all_n_bins[i], exp_time=exptime, lam_min=lam_min, lam_max=lam_max)        
-        U, err = find_utility(design, spectrum_set, samples)
+        U, err = find_utility(design, spectrum_set, samples, utility='information')
+
+        dist_low[i] = U - err
+        dist_med[i] = U
+        dist_high[i] = U + err
+
+    # alternative:
+    # markers, caps, bars = ax1.errorbar(all_SR, dist_med, yerr=err, fmt='o', markersize='1.5', label=exptime)
+    # [bar.set_alpha(0.5) for bar in bars]
+    # [cap.set_alpha(0.5) for cap in caps]
+
+    ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax1.plot(all_SR, dist_med)
+
+    ax2.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax2.plot(all_SNR, dist_med)
+
+
+prior_entropy = - np.log2(1/4)
+
+ax1.plot(all_SR, all_SR * 0 + prior_entropy, 'k', label='0 (flat prior, baseline)')
+ax1.set_xlabel('SR')
+ax1.set_yscale('log')
+# ax1.xscale('log')
+ax1.set_ylabel('posterior entropy [bits]\n(lower is better)')
+#ax1.set_title('Ideal SR for different exposure times')
+ax1.legend(title='exposure time', fontsize=9)
+# ax1.tick_params(axis='both', which='major', labelsize=9)
+# ax1.tick_params(axis='both', which='minor', labelsize=9)
+
+ax2.plot(np.linspace(1.4, 45, 2), prior_entropy*np.ones((2)), 'k')
+ax2.set_xlabel('SNR')
+ax2.set_yscale('log')
+#ax2.set_title('Ideal SNR for different exposure times')
+# ax2.tick_params(axis='both', which='major', labelsize=9)
+# ax2.tick_params(axis='both', which='minor', labelsize=9)
+#plt.legend()
+
+
+#fig.tight_layout()
+plt.savefig('fig/entropy-exptime.pdf', bbox_inches='tight')
+
+
+
+
+
+
+
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
+    gridspec_kw={'hspace': 0, 'wspace': 0},
+    figsize=(textwidth, figheight))
+
+# run experiment: confidence
+for exptime in exptimes:
+    all_SNR = np.sqrt(exptime / all_n_bins)    
+    all_SR = (lam_max + lam_min)/(lam_max - lam_min) * all_n_bins / 2
+
+
+    dist_low = np.zeros(all_SNR.shape)
+    dist_high = np.zeros_like(dist_low)
+    dist_med = np.zeros_like(dist_low)
+
+    for i in range(all_n_bins.shape[0]):
+        design = Design(n_bins = all_n_bins[i], exp_time=exptime, lam_min=lam_min, lam_max=lam_max)        
+        U, err = find_utility(design, spectrum_set, samples, utility='confidence')
 
         dist_low[i] = U - err
         dist_med[i] = U
         dist_high[i] = U + err
 
 
-    plt.subplot(121)
-    plt.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
-    plt.plot(all_SR, dist_med)
+    ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax1.plot(all_SR, dist_med)
 
-    plt.subplot(122)
-    plt.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
-    plt.plot(all_SNR, dist_med)
-    
+    ax2.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax2.plot(all_SNR, dist_med)
 
-prior_entropy = -np.log(1/4)
 
-plt.subplot(121)
-plt.plot(all_SR, all_SR * 0 + prior_entropy, 'k')
-plt.xlabel('SR')
-plt.yscale('log')
-#plt.xscale('log')
-plt.ylabel('posterior entropy [nats]\n(lower is better)')
-plt.title('Ideal SR for different exposure times')
+prior_likelihood = 1 - 1/4
+
+ax1.plot(all_SR, all_SR * 0 + prior_likelihood, 'k', label='0 (flat prior, baseline)')
+ax1.set_xlabel('SR')
+ax1.set_yscale('log')
+# ax1.xscale('log')
+ax1.set_ylabel('likelihood of being wrong\n(lower is better)')
+#ax1.set_title('Ideal SR for different exposure times')
+ax1.legend(title='exposure time', fontsize=9)
+# ax1.tick_params(axis='both', which='major', labelsize=9)
+# ax1.tick_params(axis='both', which='minor', labelsize=9)
+
+ax2.plot(np.linspace(1.4, 45, 2), prior_likelihood*np.ones((2)), 'k')
+ax2.set_xlabel('SNR')
+ax2.set_yscale('log')
+#ax2.set_title('Ideal SNR for different exposure times')
+# ax2.tick_params(axis='both', which='major', labelsize=9)
+# ax2.tick_params(axis='both', which='minor', labelsize=9)
 #plt.legend()
 
-plt.subplot(122)
-plt.plot(np.linspace(4, 20, 2), prior_entropy*np.ones((2)), 'k', label='flat prior (baseline)')
-plt.xlabel('SNR')
-plt.yscale('log')
-plt.title('Ideal SNR for different exposure times')
-plt.legend()
-
-plt.tight_layout()
-plt.show()
+#fig.tight_layout()
+plt.savefig('fig/likelihood-exptime.pdf', bbox_inches='tight')
 
 
 
+
+
+
+
+
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
+    gridspec_kw={'hspace': 0, 'wspace': 0},
+    figsize=(textwidth, figheight))
+
+# run experiment: confidence
+for exptime in exptimes:
+    all_SNR = np.sqrt(exptime / all_n_bins)    
+    all_SR = (lam_max + lam_min)/(lam_max - lam_min) * all_n_bins / 2
+
+
+    dist_low = np.zeros(all_SNR.shape)
+    dist_high = np.zeros_like(dist_low)
+    dist_med = np.zeros_like(dist_low)
+
+    for i in range(all_n_bins.shape[0]):
+        design = Design(n_bins = all_n_bins[i], exp_time=exptime, lam_min=lam_min, lam_max=lam_max)        
+        U, err = find_utility(design, spectrum_set, samples, utility='wrong')
+
+        dist_low[i] = U - err
+        dist_med[i] = U
+        dist_high[i] = U + err
+
+
+    #ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax1.plot(all_SR, dist_med, label=exptime)
+
+    #ax2.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax2.plot(all_SNR, dist_med, label=exptime)
+
+
+prior_likelihood = 1 - 1/4
+
+ax1.plot(all_SR, all_SR * 0 + prior_likelihood, 'k', label='0 (flat prior, baseline)')
+ax1.set_xlabel('SR')
+ax1.set_yscale('log')
+# ax1.xscale('log')
+ax1.set_ylabel('probability of being wrong\n(lower is better)')
+#ax1.set_title('Ideal SR for different exposure times')
+
+# ax1.tick_params(axis='both', which='major', labelsize=9)
+# ax1.tick_params(axis='both', which='minor', labelsize=9)
+
+ax2.plot(np.linspace(1.4, 45, 2), prior_likelihood*np.ones((2)), 'k')
+ax2.set_xlabel('SNR')
+ax2.set_yscale('log')
+#ax2.set_title('Ideal SNR for different exposure times')
+# ax2.tick_params(axis='both', which='major', labelsize=9)
+# ax2.tick_params(axis='both', which='minor', labelsize=9)
+ax2.legend(title='exposure time', fontsize=9)
+
+#fig.tight_layout()
+plt.savefig('fig/probability-exptime.pdf', bbox_inches='tight')
+
+
+
+
+
+
+
+
+#
+# heatmaps
+#
+
+all_SNR = [1, 5, 10, 20]
+all_SR = [10, 50, 100]
+
+# heatmap:
+dist = np.empty((len(all_SR), len(all_SNR)))
+# dist[SR, SNR]
+
+for i, SR in enumerate(all_SR):
+    for j, SNR in enumerate(all_SNR):
+        design = Design(SR = SR, peak_SNR=SNR, lam_min=lam_min, lam_max=lam_max)        
+        dist[i, j], _ = find_utility(design, spectrum_set, samples, utility='information')
+
+plot_heatmap(dist, all_SNR, all_SR, 'posterior entropy', 'entropy')
+
+
+for i, SR in enumerate(all_SR):
+    for j, SNR in enumerate(all_SNR):
+        design = Design(SR = SR, peak_SNR=SNR, lam_min=lam_min, lam_max=lam_max)        
+        dist[i, j], _ = find_utility(design, spectrum_set, samples, utility='confidence')
+
+plot_heatmap(dist, all_SNR, all_SR, '1 - confidence of inference', 'likelihood')
+
+
+
+for i, SR in enumerate(all_SR):
+    for j, SNR in enumerate(all_SNR):
+        design = Design(SR = SR, peak_SNR=SNR, lam_min=lam_min, lam_max=lam_max)        
+        dist[i, j], _ = find_utility(design, spectrum_set, samples, utility='wrong')
+
+plot_heatmap(dist, all_SNR, all_SR, 'probability of wrong inference', 'probability')

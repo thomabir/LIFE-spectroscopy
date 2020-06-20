@@ -18,6 +18,13 @@ class Design:
         # exposure time
         self.exp_time = exp_time
 
-        # calculate (TODO implement solver for general cases)
-        self.SR = (lam_max + lam_min) / (lam_max - lam_min) * n_bins / 2
-        self.peak_SNR = np.sqrt(exp_time / n_bins)
+        # n_bins and exptime are given:
+        if self.SR is None and self.peak_SNR is None:
+            self.SR = (lam_max + lam_min) / (lam_max - lam_min) * n_bins / 2
+            self.peak_SNR = np.sqrt(exp_time / n_bins)
+
+        # SR and SNR are given:
+        if self.n_bins is None and self.exp_time is None:
+            self.n_bins = 2 * SR * (lam_max - lam_min) / (lam_max + lam_min)
+            self.n_bins = int( np.around(self.n_bins) )
+            self.exp_time = peak_SNR**2 / self.n_bins

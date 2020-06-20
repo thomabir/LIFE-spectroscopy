@@ -62,6 +62,18 @@ class ProbabilityModel:
         self.log_p_H_x = np.copy(probmatrix)
 
     def calculate_utility(self, utility=None):
+
+        if utility == "information":
+            return self.entropyGain
+
+        elif utility == "confidence":
+            return self.confidence
+
+        elif utility == "wrong":
+            return self.wrong
+
+    @cached_property
+    def entropyGain(self):
         log_p_H_x = self.log_p_H_x
         log_p_x_H = self.log_p_x_H
 
@@ -77,7 +89,7 @@ class ProbabilityModel:
         log_p_x_H = new_log_p_x_H
 
         # prior entropy
-        E_before = - np.log(1 / self.n)
+        # E_before = - np.log(1 / self.n)
 
         # normalize and sum
         log_p_x_H -= np.mean(log_p_x_H)    # normalize for better numerics
@@ -87,6 +99,7 @@ class ProbabilityModel:
         # posterior utility
         U_x = - log_p_H_x * np.exp(log_p_H_x)
         U_x = np.sum(U_x, axis=0)  # sum over hpyothesis
+        U_x = U_x / np.log(2)   # convert to bits
 
         U = np.mean(U_x)  # expectation value of U_x
 
@@ -102,3 +115,55 @@ class ProbabilityModel:
             del spectrum.sample_spectrum
 
         return E_after, err
+
+    @cached_property
+    def wrong(self):
+        """Probability of infering a hypothesis that is not equal to the ground truth."""
+        log_p_H_x = self.log_p_H_x
+        p_H_x = np.exp(log_p_H_x)
+
+        successes = []
+
+        for i in range(self.n):
+
+            conf = p_H_x[:, i, :]
+            maxidx = np.argmax(conf, axis=0)
+            # prob is True where inference found the ground truth
+            prob = maxidx == i
+            successes.append(prob)
+
+        prob_of_success = np.sum(successes) / (self.samples * self.n)
+
+        for spectrum in self.spectra:
+            del spectrum.sample_spectrum
+
+        # TODO: Error
+        err = 0
+
+        return 1 - prob_of_success, err
+
+    @cached_property
+    def confidence(self):
+        """Likelihood of being wrong"""
+        log_p_H_x = self.log_p_H_x
+
+        # reshape
+        new_log_p_H_x = np.zeros((self.n, self.n * self.samples))
+
+        for i in range(self.n):
+            new_log_p_H_x[i, :] = log_p_H_x[i, :, :].flatten()
+
+        p_H_x = np.exp(new_log_p_H_x)
+
+        # get diagonal elements
+        conf = np.amax(p_H_x, axis=0)
+
+        err = np.std(conf) / np.sqrt(self.samples)
+
+        # mean out the different samples
+        conf = np.mean(conf)
+
+        for spectrum in self.spectra:
+            del spectrum.sample_spectrum
+
+        return 1 - conf, err
