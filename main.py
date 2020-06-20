@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from spectres import spectres
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,247 +9,35 @@ from functools import lru_cache
 from cached_property import cached_property  # pip install cached-property
 
 import seaborn as sns
-sns.set()
+#sns.set()
 import itertools as it
 
 
-@lru_cache(maxsize=128)
-def getflux(scenario, convert_to_photons=True):
-
-    time = scenario[0]
-    weather = scenario[1]
-
-    data = pd.read_csv('spectra/' + weather + '/' + time + '.csv').to_numpy()
-    flux = data[:, 1]
-    wl = data[:, 0]
-
-    flux = np.flip(flux)
-    wl = np.flip(wl)
-
-    # E propto N / lambda
-    # convert from energy to photons
-    if convert_to_photons:
-        flux = flux * wl
-
-    label = time + ' ' + weather
-
-    return wl, flux, label
+from spectrum import Spectrum
+from spectrum_set import SpectrumSet 
+from inout import getflux
+from ProbabilityModel import *
+from design import Design
 
 
-class Spectrum:
-    def __init__(self, wl, flux, label):
-        self.wl = wl
-        self.flux = flux
-        self.label = label
+def find_utility(design, spectrum_set, samples, utility=None):
 
-        self.original_wl = wl
-        self.original_flux = flux
+    # generate actual hypothesis spectra from experimental design
+    spectrum_set.resample(design)
 
-    def resample(self, SR=10, SNR=100, overwrite_original=False):
+    # calculate the utility
+    pm = ProbabilityModel(spectrum_set=spectrum_set, samples=samples)
+    pm.evaluate()
+    utility, utility_std = pm.calculate_utility(utility=utility)
 
-        # features of original spectrum
-        lam_min = max(np.amin(self.original_wl), 3.)  # we measure infrared, so lam >= 3 um
-        lam_max = np.amax(self.original_wl)
-        lam_avg = (lam_min + lam_max) / 2  # assumes uniform sampling
+    # reset the cached memory (not necessary with this class structure)
+    # for spectrum in spectrum_set.spectra:
+    #    del spectrum.sample_spectrum
 
-        # features of new spectrum
-        delta_lam = lam_avg / SR
-        lam_min += 3 * delta_lam
-        lam_max -= 3 * delta_lam
-        n_bins = (lam_max - lam_min) / delta_lam
-        n_bins = int(n_bins)
+    return utility, utility_std
 
-        newwl = np.linspace(lam_min, lam_max, n_bins)
-        newflux = spectres(newwl, self.original_wl, self.original_flux)
-
-        N = SNR**2      # no. of photons per bin
-        newflux *= N / np.amax(newflux)
-
-        newfluxerr = np.sqrt(newflux)
-
-        if overwrite_original:
-            self.original_wl = newwl
-            self.original_flux = newflux
-        
-        self.wl = newwl
-        self.flux = newflux
-        self.fluxerr = newfluxerr
-
-    @cached_property
-    def sample_spectrum(self, N=100fi00):
-        flux = np.around(self.flux)
-        return poisson.rvs(flux, size=(N, flux.shape[0]))
-
-    def plot(self, *args, **kwargs):
-        plt.errorbar(self.wl, self.flux, yerr=self.fluxerr,
-                     label=self.label, fmt='o', markersize=8, capsize=8)
-        plt.xlabel('wavelength [um]')
-        plt.ylabel('photon count')
-        plt.legend()
-
-
-class ProbabilityModel:
-    def __init__(self, spectra):
-        self.spectra = spectra
-        self.n = len(spectra)
-
-    @cached_property
-    def log_probmatr(self):
-        """
-        Returns
-        logprob[i,j]:
-            i ... hypothesis
-            j ... data
-        """
-
-        def logprob(hypothesis, data):
-            """Return median log_prob of the hypothesis, given the data."""
-
-            # for each data point in each sampled spectrum
-            logprobs = poisson.logpmf(data, hypothesis)
-
-            # for each sampled spectrum
-            total_logprob = np.sum(logprobs, axis=-1)
-            total_logprob *= np.e / 10  # convert to log10 instead of ln
-
-            # average over all sampled spectra
-            # median is used since it is almost invariant under log
-            avg_prob = np.median(total_logprob)
-            return avg_prob
-
-        probmatrix = np.zeros((self.n, self.n))
-
-        # compute the unnormalized log probability matrix
-        for i, hypothesis_spectrum in enumerate(spectra):
-            for j, data_spectrum in enumerate(spectra):
-
-                hypothesis_flux = hypothesis_spectrum.flux
-                data_flux = data_spectrum.sample_spectrum
-
-                probmatrix[i, j] = logprob(hypothesis_flux, data_flux)
-
-        # normalize the log probability matrix.
-        for j in range(self.n):
-
-            # for numerical feasability, normalize such that pm[j,j] = 0.
-            # this mathematically not necessary, but numerically important,
-            # because the range of float64 would be exhausted pretty quickly.
-            probmatrix[:, j] = probmatrix[:, j] - probmatrix[j, j]
-
-            # normalize each row "properly", such that the probabilites sum up to 1.
-            probmatrix[:, j] = probmatrix[:, j] - np.log10(np.sum(10**probmatrix[:, j]))
-
-        return probmatrix
-
-    @cached_property
-    def probmatr(self):
-        return 10**self.log_probmatr
-
-    @cached_property
-    def metric1(self):
-        n = self.n
-        pm = self.probmatr
-        distance = np.zeros(pm.shape)
-
-        for i in range(self.n):
-            for j in range(self.n):
-                if i > j:
-                    d1 = abs(pm[i, j] - pm[j, j])
-                    d2 = abs(pm[j, i] - pm[i, i])
-                    distance[i, j] = min(d1, d2)
-                if i <= j:
-                    distance[i, j] = np.nan
-        return np.nanmin(distance)
-
-    @cached_property
-    def metric2(self):
-        n = self.n
-        pm = self.log_probmatr
-        distance = np.zeros(pm.shape)
-
-        for i in range(self.n):
-            for j in range(self.n):
-                if i > j:
-                    d1 = abs(pm[i, j] - pm[j, j])
-                    d2 = abs(pm[j, i] - pm[i, i])
-                    distance[i, j] = min(d1, d2)
-                if i <= j:
-                    distance[i, j] = np.nan
-
-        return np.nanmin(distance)
-
-    @cached_property
-    def metric3(self):
-        """Confidence of most likely hypothesis"""
-        n = self.n
-        pm = self.probmatr
-
-
-        # pm[hypothesis, data]
-        conf = np.nanmax(pm, axis=0)
-        return np.amin(conf)
-
-
-# def plot_probmatrix(matrix):
-#     ax = sns.heatmap(matrix, fmt='.1f', annot=True,
-#                      cmap=sns.color_palette('Blues_r'))
-#     ax.set_xlabel('data')
-#     ax.set_ylabel('hypothesis')
-#     ax.set_xticklabels(times)
-#     ax.set_yticklabels(times)
-#     ax.set_title('log Probability of hypothesis, given data\nSR = ' +
-#                  str(SR) + ', SNR = ' + str(SNR))
-#     # fig.tight_layout()
-#     plt.show()
-#     # plt.savefig('probabilities-SR=' + str(SR) + '-SNR=' + str(SNR) + '.pdf')
-#     # plt.close()
-
-
-# def plot_distance(matrix):
-#     ax = sns.heatmap(distance, fmt='.5f', annot=True,
-#                      cmap=sns.color_palette('Blues'))
-#     ax.set_xticklabels(times)
-#     ax.set_yticklabels(times)
-#     # ax.set_xlabel('data')
-#     # ax.set_ylabel('spectrum')
-#     ax.set_title('metric distance between spectra\nSR = ' +
-#                  str(SR) + ', SNR = ' + str(SNR))
-#     # fig.tight_layout()
-#     plt.show()
-#     # plt.savefig('difference-ratio-SR=' + str(SR) + '-SNR=' + str(SNR) + '.pdf')
-#     # plt.close()
-
-
-weathers = ['clear']  # , 'cloudy']
-times = ['modern', '0.8Ga', '2.0Ga', '3.9Ga']
-
-scenarios = it.product(times, weathers)
-
-# load data from disk, and put into 'spectra'
-spectra = []
-for scenario in scenarios:
-    wl, flux, label = getflux(scenario, convert_to_photons=True)
-    new_spectrum = Spectrum(wl, flux, label)
-    spectra.append(new_spectrum)
-
-
-def run_simulation(SR=10, SNR=100):
-    for spectrum in spectra:
-        spectrum.resample(SR=SR, SNR=SNR)
-        try:
-            del spectrum.sample_spectrum
-        except:
-            pass
-        # spectrum.plot()
-    # plt.show()
-
-    # find distance metric
-    p = ProbabilityModel(spectra)
-    result = p.metric1
-    return 1 - result
-
-
-def plot_heatmap(dist, title):
+def plot_heatmap(dist, all_SNR, all_SR, title, filename):
+    fig, ax = plt.subplots(1, 1)
     ax = sns.heatmap(dist,
                      # fmt='.1f',
                      annot=True,
@@ -261,60 +48,275 @@ def plot_heatmap(dist, title):
     ax.set_xticklabels(np.around(all_SNR))
     ax.set_yticklabels(np.around(all_SR))
     ax.set_title(title)
-    plt.savefig('metric1.pdf')
-    plt.show()
+    plt.savefig('fig/' + filename + '-heatmap.pdf')
 
-def generate_heatmap(all_SNR=10, all_SR=100):
-    dist = np.empty((len(all_SR), len(all_SNR)))
 
-    for i, SR in enumerate(all_SR):
-        for j, SNR in enumerate(all_SNR):
-            # metric
-            try:
-                dist[i, j] = run_simulation(SR=SR, SNR=SNR)
-            except:
-                dist[i, j] = np.nan
+# set the scenarios
+weathers = ['clear']  # , 'cloudy']
+times = ['modern', '0.8Ga', '2.0Ga', '3.9Ga']
+scenarios = it.product(times, weathers)
 
-    #title = '1 - confidence that most likely hypothesis is correct\n= "probability of being wrong"'
-    title = '1 - difference between probabilities'
-    plot_heatmap(dist, title)
+
+# load data from disk, and put into 'spectra'
+spectra = []
+for scenario in scenarios:
+    wl, flux, label = getflux(scenario, convert_to_photons=True)
+    new_spectrum = Spectrum(wl, flux, label)
+    spectra.append(new_spectrum)
+
 
 # to increase preformance for high-res original spectra,
-# resample them with SR = 1000
-for spectrum in spectra:
-    spectrum.resample(SNR=100, SR=2000, overwrite_original=True)
+# resample them with moderate resolution
+for i, spectrum in enumerate(spectra):
+    spectrum.resample(lam_min=2.9, lam_max=19.99, n_bins=1000, overwrite_original=True)
+
+spectrum_set = SpectrumSet(spectra)
 
 
-exptimes = [1000, 1500, 2000]
+
+# set up experiment designs
+exptimes = [100, 1000, 4000]
+all_n_bins = np.arange(2, 40, 1)
+lam_max = 19.95
+lam_min = 3.
+samples = 500
+
+
+import matplotlib as mpl
+
+
+import matplotlib.font_manager as fm# Collect all the font names available to matplotlib
+# fm._rebuild()
+# font_names = [f.name for f in fm.fontManager.ttflist]
+# print(font_names)
+# exit()
+
+# mpl.rcParams['font.family'] = 'Avenir'
+plt.rcParams['font.size'] = 11
+plt.rcParams['axes.linewidth'] = 1
+
+
+textwidth = 8
+figheight = 4
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
+    gridspec_kw={'hspace': 0, 'wspace': 0},
+    figsize=(textwidth, figheight))
+
+
+# run experiment: entropy
+for j, exptime in enumerate(exptimes):
+    all_SNR = np.sqrt(exptime / all_n_bins)    
+    all_SR = (lam_max + lam_min)/(lam_max - lam_min) * all_n_bins / 2
+
+
+    dist_low = np.zeros(all_SNR.shape)
+    dist_high = np.zeros_like(dist_low)
+    dist_med = np.zeros_like(dist_low)
+
+    for i in range(all_n_bins.shape[0]):
+        design = Design(n_bins = all_n_bins[i], exp_time=exptime, lam_min=lam_min, lam_max=lam_max)        
+        U, err = find_utility(design, spectrum_set, samples, utility='information')
+
+        dist_low[i] = U - err
+        dist_med[i] = U
+        dist_high[i] = U + err
+
+    # alternative:
+    # markers, caps, bars = ax1.errorbar(all_SR, dist_med, yerr=err, fmt='o', markersize='1.5', label=exptime)
+    # [bar.set_alpha(0.5) for bar in bars]
+    # [cap.set_alpha(0.5) for cap in caps]
+
+    ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax1.plot(all_SR, dist_med)
+
+    ax2.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax2.plot(all_SNR, dist_med)
+
+
+prior_entropy = - np.log2(1/4)
+
+ax1.plot(all_SR, all_SR * 0 + prior_entropy, 'k', label='0 (flat prior, baseline)')
+ax1.set_xlabel('SR')
+ax1.set_yscale('log')
+# ax1.xscale('log')
+ax1.set_ylabel('posterior entropy [bits]\n(lower is better)')
+#ax1.set_title('Ideal SR for different exposure times')
+ax1.legend(title='exposure time', fontsize=9)
+# ax1.tick_params(axis='both', which='major', labelsize=9)
+# ax1.tick_params(axis='both', which='minor', labelsize=9)
+
+ax2.plot(np.linspace(1.4, 45, 2), prior_entropy*np.ones((2)), 'k')
+ax2.set_xlabel('SNR')
+ax2.set_yscale('log')
+#ax2.set_title('Ideal SNR for different exposure times')
+# ax2.tick_params(axis='both', which='major', labelsize=9)
+# ax2.tick_params(axis='both', which='minor', labelsize=9)
+#plt.legend()
+
+
+#fig.tight_layout()
+plt.savefig('fig/entropy-exptime.pdf', bbox_inches='tight')
+
+
+
+
+
+
+
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
+    gridspec_kw={'hspace': 0, 'wspace': 0},
+    figsize=(textwidth, figheight))
+
+# run experiment: confidence
 for exptime in exptimes:
-    all_SNR = np.linspace(2,10,20)
-    all_SR = exptime / all_SNR**2
-
-    dist = np.zeros(all_SNR.shape)
-    for i in range(all_SNR.shape[0]):
-            dist[i] = run_simulation(SR=all_SR[i], SNR=all_SNR[i])
-
-    dist = dist / np.mean(dist)
-    #print(all_SR)
-
-    plt.plot(all_SNR, dist, label=exptime)
-    plt.xlabel('SNR')
-    plt.ylabel('goodness of experiment, normalized\n(lower is better)')
-    plt.title('Ideal SNR for 3 different exposure times')
-    plt.legend()
-
-plt.show()
+    all_SNR = np.sqrt(exptime / all_n_bins)    
+    all_SR = (lam_max + lam_min)/(lam_max - lam_min) * all_n_bins / 2
 
 
-#N_tot = SNR**2 * SR
-#all_SR = 500 / np.array(all_SNR)**2
-#all_SR = [100, 50, 20, 10]
-# all_SNR = np.sqrt(2000 / np.array(all_SR))
+    dist_low = np.zeros(all_SNR.shape)
+    dist_high = np.zeros_like(dist_low)
+    dist_med = np.zeros_like(dist_low)
+
+    for i in range(all_n_bins.shape[0]):
+        design = Design(n_bins = all_n_bins[i], exp_time=exptime, lam_min=lam_min, lam_max=lam_max)        
+        U, err = find_utility(design, spectrum_set, samples, utility='confidence')
+
+        dist_low[i] = U - err
+        dist_med[i] = U
+        dist_high[i] = U + err
 
 
-# all_SR = [10, 20, 50, 100]
-# all_SNR = [2, 3, 5, 7, 10, 20]
-# generate_heatmap(all_SNR=all_SNR, all_SR=all_SR)
+    ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax1.plot(all_SR, dist_med)
+
+    ax2.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax2.plot(all_SNR, dist_med)
+
+
+prior_likelihood = 1 - 1/4
+
+ax1.plot(all_SR, all_SR * 0 + prior_likelihood, 'k', label='0 (flat prior, baseline)')
+ax1.set_xlabel('SR')
+ax1.set_yscale('log')
+# ax1.xscale('log')
+ax1.set_ylabel('likelihood of being wrong\n(lower is better)')
+#ax1.set_title('Ideal SR for different exposure times')
+ax1.legend(title='exposure time', fontsize=9)
+# ax1.tick_params(axis='both', which='major', labelsize=9)
+# ax1.tick_params(axis='both', which='minor', labelsize=9)
+
+ax2.plot(np.linspace(1.4, 45, 2), prior_likelihood*np.ones((2)), 'k')
+ax2.set_xlabel('SNR')
+ax2.set_yscale('log')
+#ax2.set_title('Ideal SNR for different exposure times')
+# ax2.tick_params(axis='both', which='major', labelsize=9)
+# ax2.tick_params(axis='both', which='minor', labelsize=9)
+#plt.legend()
+
+#fig.tight_layout()
+plt.savefig('fig/likelihood-exptime.pdf', bbox_inches='tight')
 
 
 
+
+
+
+
+
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
+    gridspec_kw={'hspace': 0, 'wspace': 0},
+    figsize=(textwidth, figheight))
+
+# run experiment: confidence
+for exptime in exptimes:
+    all_SNR = np.sqrt(exptime / all_n_bins)    
+    all_SR = (lam_max + lam_min)/(lam_max - lam_min) * all_n_bins / 2
+
+
+    dist_low = np.zeros(all_SNR.shape)
+    dist_high = np.zeros_like(dist_low)
+    dist_med = np.zeros_like(dist_low)
+
+    for i in range(all_n_bins.shape[0]):
+        design = Design(n_bins = all_n_bins[i], exp_time=exptime, lam_min=lam_min, lam_max=lam_max)        
+        U, err = find_utility(design, spectrum_set, samples, utility='wrong')
+
+        dist_low[i] = U - err
+        dist_med[i] = U
+        dist_high[i] = U + err
+
+
+    #ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax1.plot(all_SR, dist_med, label=exptime)
+
+    #ax2.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax2.plot(all_SNR, dist_med, label=exptime)
+
+
+prior_likelihood = 1 - 1/4
+
+ax1.plot(all_SR, all_SR * 0 + prior_likelihood, 'k', label='0 (flat prior, baseline)')
+ax1.set_xlabel('SR')
+ax1.set_yscale('log')
+# ax1.xscale('log')
+ax1.set_ylabel('probability of being wrong\n(lower is better)')
+#ax1.set_title('Ideal SR for different exposure times')
+
+# ax1.tick_params(axis='both', which='major', labelsize=9)
+# ax1.tick_params(axis='both', which='minor', labelsize=9)
+
+ax2.plot(np.linspace(1.4, 45, 2), prior_likelihood*np.ones((2)), 'k')
+ax2.set_xlabel('SNR')
+ax2.set_yscale('log')
+#ax2.set_title('Ideal SNR for different exposure times')
+# ax2.tick_params(axis='both', which='major', labelsize=9)
+# ax2.tick_params(axis='both', which='minor', labelsize=9)
+ax2.legend(title='exposure time', fontsize=9)
+
+#fig.tight_layout()
+plt.savefig('fig/probability-exptime.pdf', bbox_inches='tight')
+
+
+
+
+
+
+
+
+#
+# heatmaps
+#
+
+all_SNR = [1, 5, 10, 20]
+all_SR = [10, 50, 100]
+
+# heatmap:
+dist = np.empty((len(all_SR), len(all_SNR)))
+# dist[SR, SNR]
+
+for i, SR in enumerate(all_SR):
+    for j, SNR in enumerate(all_SNR):
+        design = Design(SR = SR, peak_SNR=SNR, lam_min=lam_min, lam_max=lam_max)        
+        dist[i, j], _ = find_utility(design, spectrum_set, samples, utility='information')
+
+plot_heatmap(dist, all_SNR, all_SR, 'posterior entropy', 'entropy')
+
+
+for i, SR in enumerate(all_SR):
+    for j, SNR in enumerate(all_SNR):
+        design = Design(SR = SR, peak_SNR=SNR, lam_min=lam_min, lam_max=lam_max)        
+        dist[i, j], _ = find_utility(design, spectrum_set, samples, utility='confidence')
+
+plot_heatmap(dist, all_SNR, all_SR, '1 - confidence of inference', 'likelihood')
+
+
+
+for i, SR in enumerate(all_SR):
+    for j, SNR in enumerate(all_SNR):
+        design = Design(SR = SR, peak_SNR=SNR, lam_min=lam_min, lam_max=lam_max)        
+        dist[i, j], _ = find_utility(design, spectrum_set, samples, utility='wrong')
+
+plot_heatmap(dist, all_SNR, all_SR, 'probability of wrong inference', 'probability')
