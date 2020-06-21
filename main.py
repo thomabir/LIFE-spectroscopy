@@ -37,18 +37,19 @@ def find_utility(design, spectrum_set, samples, utility=None):
     return utility, utility_std
 
 def plot_heatmap(dist, all_SNR, all_SR, title, filename):
-    fig, ax = plt.subplots(1, 1)
+    fig, ax = plt.subplots(1, 1, figsize=(columnwidth, smallfigheight))
     ax = sns.heatmap(dist,
                      # fmt='.1f',
                      annot=True,
                      cmap=sns.color_palette('Blues_r'),
+                     cbar=False
                      )
     ax.set_xlabel('SNR')
     ax.set_ylabel('SR')
     ax.set_xticklabels(np.around(all_SNR))
     ax.set_yticklabels(np.around(all_SR))
-    ax.set_title(title)
-    plt.savefig('fig/' + filename + '-heatmap.pdf')
+    # ax.set_title(title)
+    plt.savefig('fig/' + filename + '-heatmap.pdf', bbox_inches='tight')
 
 
 # set the scenarios
@@ -92,12 +93,15 @@ import matplotlib.font_manager as fm# Collect all the font names available to ma
 # exit()
 
 # mpl.rcParams['font.family'] = 'Avenir'
-plt.rcParams['font.size'] = 11
+plt.rcParams['font.size'] = 8
 plt.rcParams['axes.linewidth'] = 1
+plt.rc('legend', fontsize=7)
 
 
-textwidth = 8
-figheight = 4
+textwidth = 7.02893
+figheight = 3
+smallfigheight = 2.5
+columnwidth = 3.44527
 
 fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
     gridspec_kw={'hspace': 0, 'wspace': 0},
@@ -142,16 +146,17 @@ ax1.set_yscale('log')
 # ax1.xscale('log')
 ax1.set_ylabel('posterior entropy [bits]\n(lower is better)')
 #ax1.set_title('Ideal SR for different exposure times')
-ax1.legend(title='exposure time', fontsize=9)
+ax1.legend(title='exposure time', loc='lower right')
 # ax1.tick_params(axis='both', which='major', labelsize=9)
 # ax1.tick_params(axis='both', which='minor', labelsize=9)
 
-ax2.plot(np.linspace(1.4, 45, 2), prior_entropy*np.ones((2)), 'k')
+ax2.plot(np.linspace(1.4, 45, 2), prior_entropy*np.ones((2)), 'k', label='0 (flat prior, baseline)')
 ax2.set_xlabel('SNR')
 ax2.set_yscale('log')
 #ax2.set_title('Ideal SNR for different exposure times')
 # ax2.tick_params(axis='both', which='major', labelsize=9)
 # ax2.tick_params(axis='both', which='minor', labelsize=9)
+# ax2.legend(title='exposure time', loc='upper right')
 #plt.legend()
 
 
@@ -201,9 +206,9 @@ ax1.plot(all_SR, all_SR * 0 + prior_likelihood, 'k', label='0 (flat prior, basel
 ax1.set_xlabel('SR')
 ax1.set_yscale('log')
 # ax1.xscale('log')
-ax1.set_ylabel('likelihood of being wrong\n(lower is better)')
+ax1.set_ylabel('1 - confidence of inference\n(lower is better)')
 #ax1.set_title('Ideal SR for different exposure times')
-ax1.legend(title='exposure time', fontsize=9)
+# ax1.legend(title='exposure time')
 # ax1.tick_params(axis='both', which='major', labelsize=9)
 # ax1.tick_params(axis='both', which='minor', labelsize=9)
 
@@ -262,7 +267,7 @@ ax1.plot(all_SR, all_SR * 0 + prior_likelihood, 'k', label='0 (flat prior, basel
 ax1.set_xlabel('SR')
 ax1.set_yscale('log')
 # ax1.xscale('log')
-ax1.set_ylabel('probability of being wrong\n(lower is better)')
+ax1.set_ylabel('probability of inference not\nagreeing with ground truth')
 #ax1.set_title('Ideal SR for different exposure times')
 
 # ax1.tick_params(axis='both', which='major', labelsize=9)
@@ -274,7 +279,7 @@ ax2.set_yscale('log')
 #ax2.set_title('Ideal SNR for different exposure times')
 # ax2.tick_params(axis='both', which='major', labelsize=9)
 # ax2.tick_params(axis='both', which='minor', labelsize=9)
-ax2.legend(title='exposure time', fontsize=9)
+# ax2.legend(title='exposure time')
 
 #fig.tight_layout()
 plt.savefig('fig/probability-exptime.pdf', bbox_inches='tight')
