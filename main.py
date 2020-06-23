@@ -69,17 +69,22 @@ for scenario in scenarios:
 # to increase preformance for high-res original spectra,
 # resample them with moderate resolution
 for i, spectrum in enumerate(spectra):
-    spectrum.resample(lam_min=2.9, lam_max=19.99, n_bins=1000, overwrite_original=True)
+    spectrum.resample(lam_min=4.05, lam_max=19.99, n_bins=1000, overwrite_original=True)
+
 
 spectrum_set = SpectrumSet(spectra)
+
+
+
+
 
 
 
 # set up experiment designs
 exptimes = [100, 1000, 4000]
 all_n_bins = np.arange(2, 40, 1)
-lam_max = 19.95
-lam_min = 3.
+lam_min = 4.1
+lam_max = 19.9
 samples = 500
 
 
@@ -289,7 +294,7 @@ plt.savefig('fig/probability-exptime.pdf', bbox_inches='tight')
 
 
 
-
+exit()
 
 #
 # heatmaps
