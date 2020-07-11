@@ -79,7 +79,6 @@ spectrum_set = SpectrumSet(spectra)
 
 
 
-
 # set up experiment designs
 exptimes = [100, 1000, 4000]
 all_n_bins = np.arange(2, 40, 1)
@@ -88,16 +87,7 @@ lam_max = 19.9
 samples = 500
 
 
-import matplotlib as mpl
 
-
-import matplotlib.font_manager as fm# Collect all the font names available to matplotlib
-# fm._rebuild()
-# font_names = [f.name for f in fm.fontManager.ttflist]
-# print(font_names)
-# exit()
-
-# mpl.rcParams['font.family'] = 'Avenir'
 plt.rcParams['font.size'] = 8
 plt.rcParams['axes.linewidth'] = 1
 plt.rc('legend', fontsize=7)
@@ -107,6 +97,27 @@ textwidth = 7.02893
 figheight = 3
 smallfigheight = 2.5
 columnwidth = 3.44527
+
+
+
+# plot some examples
+
+fig, ax = plt.subplots(1, 1,
+    gridspec_kw={'hspace': 0, 'wspace': 0},
+    figsize=(columnwidth, figheight))
+
+# design = Design(SR=5, peak_SNR=15, lam_min=lam_min, lam_max=lam_max)
+design = Design(SR=30, peak_SNR=7, lam_min=lam_min, lam_max=lam_max)
+spectrum_set.resample(design)
+for spectrum in spectrum_set.spectra:
+    spectrum.plot(ax, mode='continuous')
+plt.show()
+
+exit()
+
+
+
+
 
 fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
     gridspec_kw={'hspace': 0, 'wspace': 0},

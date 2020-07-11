@@ -42,10 +42,18 @@ class Spectrum:
         flux = self.flux
         return poisson.rvs(flux, size=(samples, flux.shape[0]))
 
-    def plot(self, *args, **kwargs):
-        plt.errorbar(self.wl, self.flux, yerr=self.fluxerr,
-                     label=self.label, fmt='o', markersize=8, capsize=8)
+    def plot(self, ax, mode='discrete', *args, **kwargs):
+        if mode == 'discrete':
+            ax.errorbar(self.wl, self.flux, yerr=self.fluxerr,
+                        label=self.label, fmt='o', markersize=8, capsize=8)
+
+        if mode == 'continuous':
+            ax.fill_between(self.wl, self.flux - self.fluxerr,
+                            self.flux + self.fluxerr,
+                            alpha=0.2)
+            ax.plot(self.wl, self.flux, label=self.label)
+
         # plt.plot(self.wl, self.flux)
-        plt.xlabel('wavelength [um]')
-        plt.ylabel('photon count')
-        plt.legend()
+        ax.set_xlabel('wavelength [um]')
+        ax.set_ylabel('photon count')
+        ax.legend()
