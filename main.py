@@ -53,8 +53,8 @@ def plot_heatmap(dist, all_SNR, all_SR, title, filename):
 
 
 # set the scenarios
-weathers = ['clear']  # , 'cloudy']
-times = ['modern', '0.8Ga', '2.0Ga', '3.9Ga']
+weathers = ['clear' , 'cloudy']
+times = ['0.0', '0.8', '2.0', '3.9']
 scenarios = it.product(times, weathers)
 
 
@@ -80,8 +80,8 @@ spectrum_set = SpectrumSet(spectra)
 
 
 # set up experiment designs
-exptimes = [100, 1000, 4000]
-all_n_bins = np.arange(2, 40, 1)
+exptimes = [400, 1000, 4000]
+all_n_bins = np.arange(2, 200, 1)
 lam_min = 4.1
 lam_max = 19.9
 samples = 500
@@ -102,18 +102,30 @@ columnwidth = 3.44527
 
 # plot some examples
 
-fig, ax = plt.subplots(1, 1,
+fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
     gridspec_kw={'hspace': 0, 'wspace': 0},
-    figsize=(columnwidth, figheight))
+    figsize=(textwidth, figheight))
 
 # design = Design(SR=5, peak_SNR=15, lam_min=lam_min, lam_max=lam_max)
-design = Design(SR=30, peak_SNR=7, lam_min=lam_min, lam_max=lam_max)
-spectrum_set.resample(design)
+#design = Design(SR=30, peak_SNR=7, lam_min=lam_min, lam_max=lam_max)
+#spectrum_set.resample(design)
 for spectrum in spectrum_set.spectra:
-    spectrum.plot(ax, mode='continuous')
-plt.show()
+    if 'clear' in spectrum.label:
+        ax1.plot(spectrum.wl, spectrum.flux, linewidth=0.4, label=spectrum.label[:3])
+        ax1.set_xlabel('wavelength [µm]')
+        ax1.set_ylabel('photon count')
+    if 'cloudy' in spectrum.label:
+        ax2.plot(spectrum.wl, spectrum.flux, linewidth=0.4, label=spectrum.label[:3])
+        ax2.set_xlabel('wavelength [µm]')
+        #ax2.set_ylabel('photon count')
 
-exit()
+ax1.set_title('clear weather')
+ax2.set_title('cloudy weather')
+
+ax1.legend(title='age of earth [Ga]', loc='upper left', frameon=False)
+
+
+plt.savefig('fig/earth-spectra.pdf', bbox_inches='tight')
 
 
 
@@ -159,28 +171,16 @@ prior_entropy = - np.log2(1/4)
 ax1.plot(all_SR, all_SR * 0 + prior_entropy, 'k', label='0 (flat prior, baseline)')
 ax1.set_xlabel('SR')
 ax1.set_yscale('log')
-# ax1.xscale('log')
 ax1.set_ylabel('posterior entropy [bits]\n(lower is better)')
-#ax1.set_title('Ideal SR for different exposure times')
-ax1.legend(title='exposure time', loc='lower right')
-# ax1.tick_params(axis='both', which='major', labelsize=9)
-# ax1.tick_params(axis='both', which='minor', labelsize=9)
+
 
 ax2.plot(np.linspace(1.4, 45, 2), prior_entropy*np.ones((2)), 'k', label='0 (flat prior, baseline)')
 ax2.set_xlabel('SNR')
 ax2.set_yscale('log')
-#ax2.set_title('Ideal SNR for different exposure times')
-# ax2.tick_params(axis='both', which='major', labelsize=9)
-# ax2.tick_params(axis='both', which='minor', labelsize=9)
-# ax2.legend(title='exposure time', loc='upper right')
-#plt.legend()
+ax2.legend(title='exposure time', loc='upper right')
 
 
-#fig.tight_layout()
 plt.savefig('fig/entropy-exptime.pdf', bbox_inches='tight')
-
-
-
 
 
 
@@ -305,7 +305,6 @@ plt.savefig('fig/probability-exptime.pdf', bbox_inches='tight')
 
 
 
-exit()
 
 #
 # heatmaps
