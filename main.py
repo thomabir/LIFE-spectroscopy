@@ -111,23 +111,23 @@ fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
 #spectrum_set.resample(design)
 for spectrum in spectrum_set.spectra:
     if 'clear' in spectrum.label:
-        ax1.plot(spectrum.wl, spectrum.flux, linewidth=0.4, label=spectrum.label[:3])
+        ax1.plot(spectrum.wl, spectrum.flux/300, linewidth=0.4, label=spectrum.label[:3])
         ax1.set_xlabel('wavelength [µm]')
-        ax1.set_ylabel('photon count')
+        ax1.set_ylabel('normalized photon count')
     if 'cloudy' in spectrum.label:
-        ax2.plot(spectrum.wl, spectrum.flux, linewidth=0.4, label=spectrum.label[:3])
+        ax2.plot(spectrum.wl, spectrum.flux/300, linewidth=0.4, label=spectrum.label[:3])
         ax2.set_xlabel('wavelength [µm]')
         #ax2.set_ylabel('photon count')
 
 ax1.set_title('clear weather')
 ax2.set_title('cloudy weather')
 
-ax1.legend(title='age of earth [Ga]', loc='upper left', frameon=False)
+ax2.legend(title='time ago [billion years]', loc='upper left', frameon=False)
 
 
 plt.savefig('fig/earth-spectra.pdf', bbox_inches='tight')
 
-
+exit()
 
 
 
