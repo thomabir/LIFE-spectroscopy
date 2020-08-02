@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.stats import poisson
+from scipy.special import logsumexp
 
 from cached_property import cached_property  # pip install cached-property
 
@@ -91,10 +92,11 @@ class ProbabilityModel:
         # prior entropy
         # E_before = - np.log(1 / self.n)
 
-        # normalize and sum
-        log_p_x_H -= np.mean(log_p_x_H)    # normalize for better numerics
-        p_x = np.sum(np.e**log_p_x_H, axis=0)
-        p_x = p_x / np.sum(p_x)  # normalize so that it sums to 1
+        # normalize and sum (not required currently)
+        # log_p_x_H -= np.mean(log_p_x_H)    # normalize for better numerics
+        # log_p_x = logsumexp(log_p_x_H, axis=0)
+        # log_p_x = log_p_x - np.sum(np.exp(log_p_x))  # normalize so that it sums to 1
+        # p_x = np.exp(log_p_x)
 
         # posterior utility
         U_x = - log_p_H_x * np.exp(log_p_H_x)
@@ -138,7 +140,7 @@ class ProbabilityModel:
             del spectrum.sample_spectrum
 
         # TODO: Error
-        err = 0
+        err = np.std(1 - np.asarray(successes)) / np.sqrt(self.samples)
 
         return 1 - prob_of_success, err
 

@@ -127,8 +127,6 @@ ax2.legend(title='time ago [billion years]', loc='upper left', frameon=False)
 
 plt.savefig('fig/earth-spectra.pdf', bbox_inches='tight')
 
-exit()
-
 
 
 fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
@@ -153,11 +151,6 @@ for j, exptime in enumerate(exptimes):
         dist_low[i] = U - err
         dist_med[i] = U
         dist_high[i] = U + err
-
-    # alternative:
-    # markers, caps, bars = ax1.errorbar(all_SR, dist_med, yerr=err, fmt='o', markersize='1.5', label=exptime)
-    # [bar.set_alpha(0.5) for bar in bars]
-    # [cap.set_alpha(0.5) for cap in caps]
 
     ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
     ax1.plot(all_SR, dist_med)
@@ -221,22 +214,12 @@ prior_likelihood = 1 - 1/4
 ax1.plot(all_SR, all_SR * 0 + prior_likelihood, 'k', label='0 (flat prior, baseline)')
 ax1.set_xlabel('SR')
 ax1.set_yscale('log')
-# ax1.xscale('log')
 ax1.set_ylabel('1 - confidence of inference\n(lower is better)')
-#ax1.set_title('Ideal SR for different exposure times')
-# ax1.legend(title='exposure time')
-# ax1.tick_params(axis='both', which='major', labelsize=9)
-# ax1.tick_params(axis='both', which='minor', labelsize=9)
 
 ax2.plot(np.linspace(1.4, 45, 2), prior_likelihood*np.ones((2)), 'k')
 ax2.set_xlabel('SNR')
 ax2.set_yscale('log')
-#ax2.set_title('Ideal SNR for different exposure times')
-# ax2.tick_params(axis='both', which='major', labelsize=9)
-# ax2.tick_params(axis='both', which='minor', labelsize=9)
-#plt.legend()
 
-#fig.tight_layout()
 plt.savefig('fig/likelihood-exptime.pdf', bbox_inches='tight')
 
 
@@ -251,7 +234,7 @@ fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True,
     gridspec_kw={'hspace': 0, 'wspace': 0},
     figsize=(textwidth, figheight))
 
-# run experiment: confidence
+# run experiment: probability
 for exptime in exptimes:
     all_SNR = np.sqrt(exptime / all_n_bins)    
     all_SR = (lam_max + lam_min)/(lam_max - lam_min) * all_n_bins / 2
@@ -270,34 +253,27 @@ for exptime in exptimes:
         dist_high[i] = U + err
 
 
-    #ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
-    ax1.plot(all_SR, dist_med, label=exptime)
+    ax1.fill_between(all_SR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax1.plot(all_SR, dist_med)
 
-    #ax2.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
-    ax2.plot(all_SNR, dist_med, label=exptime)
+    ax2.fill_between(all_SNR, dist_low, dist_high, label=exptime, alpha=0.3)
+    ax2.plot(all_SNR, dist_med)
 
 
 prior_likelihood = 1 - 1/4
 
+ax1.set_ylim(bottom=1e-4)
+ax2.set_ylim(bottom=1e-4)
+
 ax1.plot(all_SR, all_SR * 0 + prior_likelihood, 'k', label='0 (flat prior, baseline)')
 ax1.set_xlabel('SR')
 ax1.set_yscale('log')
-# ax1.xscale('log')
 ax1.set_ylabel('probability of inference not\nagreeing with ground truth')
-#ax1.set_title('Ideal SR for different exposure times')
-
-# ax1.tick_params(axis='both', which='major', labelsize=9)
-# ax1.tick_params(axis='both', which='minor', labelsize=9)
 
 ax2.plot(np.linspace(1.4, 45, 2), prior_likelihood*np.ones((2)), 'k')
 ax2.set_xlabel('SNR')
 ax2.set_yscale('log')
-#ax2.set_title('Ideal SNR for different exposure times')
-# ax2.tick_params(axis='both', which='major', labelsize=9)
-# ax2.tick_params(axis='both', which='minor', labelsize=9)
-# ax2.legend(title='exposure time')
 
-#fig.tight_layout()
 plt.savefig('fig/probability-exptime.pdf', bbox_inches='tight')
 
 
@@ -313,9 +289,8 @@ plt.savefig('fig/probability-exptime.pdf', bbox_inches='tight')
 all_SNR = [1, 5, 10, 20]
 all_SR = [10, 50, 100]
 
-# heatmap:
+
 dist = np.empty((len(all_SR), len(all_SNR)))
-# dist[SR, SNR]
 
 for i, SR in enumerate(all_SR):
     for j, SNR in enumerate(all_SNR):
